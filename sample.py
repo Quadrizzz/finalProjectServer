@@ -50,15 +50,17 @@ def predict_face_label(face, hog_sgd_model, resnet_model, scaler):
     # For HOG model
     hog_features = extract_features_hog(face)
     hog_prediction = hog_sgd_model.predict(hog_features)
+    # If your SGDClassifier supports `decision_function` or `predict_proba`:
     if hasattr(hog_sgd_model, 'predict_proba'):
         hog_confidence = hog_sgd_model.predict_proba(hog_features)
         hog_confidence = np.max(hog_confidence)  # Extract the highest probability
     else:
+        # Alternatively, use `decision_function` if available (for binary classification)
         if hasattr(hog_sgd_model, 'decision_function'):
             hog_confidence = hog_sgd_model.decision_function(hog_features)
             hog_confidence = 1 / (1 + np.exp(-hog_confidence))  # Sigmoid for binary output
         else:
-            hog_confidence = 1.0
+            hog_confidence = 1.0  # Fallback confidence if no confidence measurement is available
     
     # For ResNet model
     resnet_features = extract_features_resnet(face, resnet_base_model, scaler)
@@ -78,36 +80,26 @@ def predict_face_label(face, hog_sgd_model, resnet_model, scaler):
 
     return {
         'hog_prediction': hog_label,
-        'hog_confidence': str(np.max(hog_confidence)),
+        'hog_confidence': str(hog_confidence),
         'resnet_prediction': resnet_label,
         'resnet_confidence': str(resnet_confidence)
     }
 
-@app.route('/predict_faces', methods=['POST'])
-def predict_faces():
-    # Get the array of images
-    faces_data = request.json['faces']
-    predictions = []
+@app.route('/predict_face', methods=['POST'])
+def predict_face():
+    # Extract the image data from the request
+    image_string = request.json['face']
+    if image_string.startswith("data:image/"):
+        header, base64_data = image_string.split(",", 1)
+    else:
+        base64_data = image_string
+    image_data = base64.b64decode(base64_data)
+    np_image = np.frombuffer(image_data, dtype=np.uint8)
+    image = cv2.imdecode(np_image, cv2.IMREAD_COLOR)
 
-    for face_data in faces_data:
-        if face_data.startswith("data:image/"):
-            header, base64_data = face_data.split(",", 1)
-        else:
-            base64_data = face_data
-
-        # Decode the image
-        image_data = base64.b64decode(base64_data)
-        np_image = np.frombuffer(image_data, dtype=np.uint8)
-        image = cv2.imdecode(np_image, cv2.IMREAD_COLOR)
-
-        # Predict label for each face
-        prediction = predict_face_label(image, hog_sgd_model, resnet_model, scaler)
-
-        # Include the base64 image back into the response
-        prediction['image'] = face_data  # Add the original image back to the prediction
-
-        predictions.append(prediction)
-
+    # Predict label using the provided image
+    predictions = predict_face_label(image, hog_sgd_model, resnet_model, scaler)
+    
     return jsonify(predictions)
 
 if __name__ == '__main__':
